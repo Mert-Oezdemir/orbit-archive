@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit Archive</title>
+<style>
+  :root {color-scheme: dark; --ground: #111625; --panel: #192035; --ink: #e5e9ff; --soft: #b2bfdd; --rule: #465374; --accent: #d9d0ff; font: 1rem/1.5 system-ui, sans-serif}
+  * {box-sizing: border-box}
+  body {margin: 0; background: var(--ground); color: var(--ink)}
+  main {max-width: 88rem; min-height: 100svh; margin: auto; padding: clamp(1rem, 4vw, 4rem)}
+  header {display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1.6rem}
+  h1, h2, p {margin: 0}
+  h1 {font: 400 clamp(3rem, 9vw, 8rem)/.95 Georgia, serif; letter-spacing: -.075em}
+  header p {max-width: 21rem; color: var(--soft)}
+  .archive {display: grid; grid-template-columns: minmax(13rem, 1fr) minmax(0, 3fr); gap: 1.2rem}
+  aside {align-self: start; background: var(--panel); padding: 1.1rem; border: 1px solid var(--rule); border-radius: 0 0 1rem 0}
+  aside h2 {font-size: .95rem; font-weight: 650; margin-bottom: .7rem}
+  .catalogue {display: grid; gap: .4rem}
+  button {font: inherit; min-height: 44px; cursor: pointer; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: .3rem; padding: .45rem .75rem}
+  button:hover {border-color: var(--accent)}
+  button[aria-pressed=true] {background: var(--accent); border-color: var(--accent); color: #221947}
+  .catalogue button {text-align: left}
+  button:focus-visible, input:focus-visible {outline: 3px solid var(--accent); outline-offset: 3px}
+  .guide {margin: 1rem 0 0; color: var(--soft); font-size: .87rem}
+  figure {margin: 0; display: grid; min-width: 0; border: 1px solid var(--rule); border-radius: 0 0 1rem 0; overflow: hidden}
+  canvas {width: 100%; aspect-ratio: 8/5; display: block; background: #0a1020}
+  figcaption {display: grid; gap: .3rem; background: var(--panel); padding: 1rem 1.2rem}
+  figcaption h2 {font: 400 1.65rem Georgia, serif}
+  figcaption p {color: var(--soft)}
+  .controls {display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; margin-top: 1.15rem}
+  label {display: grid; flex: 1 1 13rem; gap: .35rem; color: var(--soft)}
+  input {width: 100%; accent-color: var(--accent); min-height: 1.65rem}
+  @media (max-width: 43rem) {
+    header {display: grid; gap: .7rem}
+    .archive {display: flex; flex-direction: column-reverse}
+    aside {align-self: stretch}
+    .catalogue {grid-template-columns: repeat(2, minmax(0, 1fr))}
+  }
+</style>
+<main>
+  <header><h1>Orbit Archive</h1><p>A collection of impossible satellites. Rotate each plate to see how its rings cross and separate.</p></header>
+  <div class="archive">
+    <aside aria-labelledby="catalogue-title">
+      <h2 id="catalogue-title">Observation plates</h2>
+      <div class="catalogue" id="catalogue"></div>
+      <p class="guide">Every line comes from a mathematical orbit. The plates draw live on your device.</p>
+    </aside>
+    <figure>
+      <canvas id="plate" role="img" aria-labelledby="plate-title" aria-describedby="plate-description">A procedural drawing of intersecting orbital paths.</canvas>
+      <figcaption>
+        <div aria-live="polite"><h2 id="plate-title"></h2><p id="plate-description"></p></div>
+        <div class="controls">
+          <label for="angle"><span>Viewing angle <output id="degrees" for="angle" aria-live="off">20°</output></span><input id="angle" type="range" min="0" max="359" value="20"></label>
+          <button id="spin" type="button" aria-pressed="false">Auto-rotate</button>
+          <button id="save" type="button">Save PNG</button>
+        </div>
+      </figcaption>
+    </figure>
+  </div>
+  <noscript>Enable JavaScript to draw and rotate the observation plates.</noscript>
+</main>
+<script>
+  const plates = [
+    {title: 'Blue hour', description: 'Fine cobalt rings weave around a cool, open centre.', rings: 21, hue: 217, radial: 3, pitch: 4, tilt: .81},
+    {title: 'Copper tide', description: 'A folded set of amber paths pulls into a narrow waist.', rings: 15, hue: 24, radial: 4, pitch: 2, tilt: .59},
+    {title: 'Violet relay', description: 'Broad violet lanes interleave with a pale tracer.', rings: 12, hue: 268, radial: 5, pitch: 3, tilt: 1.07},
+    {title: 'Pelagic drift', description: 'A deep teal swarm opens into two uneven lobes.', rings: 25, hue: 163, radial: 2, pitch: 5, tilt: .93},
+  ];
+  const canvas = document.querySelector('#plate');
+  const ctx = canvas.getContext('2d');
+  const catalog = document.querySelector('#catalogue');
+  const input = document.querySelector('#angle');
+  const output = document.querySelector('#degrees');
+  const spin = document.querySelector('#spin');
+  const tau = Math.PI * 2;
+  let selected = 0;
+  let angle = Number(input.value);
+  let frame = 0;
+  let previous = 0;
+
+  function draw() {
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(rect.width * pixelRatio));
+    const height = Math.max(1, Math.round(rect.height * pixelRatio));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const plate = plates[selected];
+    const cx = width / 2;
+    const cy = height / 2;
+    const size = Math.min(width, height) * .31;
+    const theta = angle * tau / 360;
+    const cosine = Math.cos(theta);
+    const sine = Math.sin(theta);
+    const backdrop = ctx.createRadialGradient(cx, cy, 1, cx, cy, width * .55);
+    backdrop.addColorStop(0, `hsl(${plate.hue} 39% 15%)`);
+    backdrop.addColorStop(1, '#080c17');
+    ctx.fillStyle = backdrop;
+    ctx.fillRect(0, 0, width, height);
+    for (let star = 0; star < 85; star += 1) {
+      ctx.fillStyle = `rgb(211 220 255 / ${.10 + (star % 7) / 28})`;
+      ctx.fillRect((star * .6180339 % 1) * width, (star * .4246193 % 1) * height, pixelRatio, pixelRatio);
+    }
+    ctx.strokeStyle = '#aebcdf33';
+    ctx.lineWidth = pixelRatio;
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 1.42, cy);
+    ctx.lineTo(cx + size * 1.42, cy);
+    ctx.moveTo(cx, cy - size * 1.42);
+    ctx.lineTo(cx, cy + size * 1.42);
+    ctx.stroke();
+    for (let ring = 0; ring < plate.rings; ring += 1) {
+      const phase = ring * tau / plate.rings;
+      ctx.strokeStyle = `hsl(${plate.hue + 34 * Math.sin(phase)} 84% ${61 + (ring % 4) * 6}% / .52)`;
+      ctx.lineWidth = .85 * pixelRatio;
+      ctx.beginPath();
+      for (let step = 0; step <= 192; step += 1) {
+        const t = step * tau / 192;
+        const radius = 1 + .18 * Math.cos(plate.radial * t + phase) + .12 * Math.sin(phase);
+        const x = radius * Math.cos(t);
+        const y = radius * Math.sin(t);
+        const z = .54 * Math.sin(plate.pitch * t + phase);
+        const depth = x * sine + z * cosine;
+        const scale = size * (1 + depth * .12);
+        const screenX = cx + (x * cosine - z * sine) * scale;
+        const screenY = cy + (y * plate.tilt + depth * .19) * scale;
+        if (step === 0) ctx.moveTo(screenX, screenY);
+        else ctx.lineTo(screenX, screenY);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function select(index) {
+    selected = index;
+    document.querySelector('#plate-title').textContent = plates[index].title;
+    document.querySelector('#plate-description').textContent = plates[index].description;
+    [...catalog.children].forEach((button, buttonIndex) => button.setAttribute('aria-pressed', String(index === buttonIndex)));
+    draw();
+  }
+
+  function rotate(time) {
+    if (previous) angle = (angle + Math.min(50, time - previous) * .018) % 360;
+    previous = time;
+    input.value = Math.floor(angle);
+    output.value = `${input.value}°`;
+    draw();
+    frame = requestAnimationFrame(rotate);
+  }
+
+  plates.forEach((plate, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = plate.title;
+    button.addEventListener('click', () => select(index));
+    catalog.append(button);
+  });
+  input.addEventListener('input', () => {
+    angle = Number(input.value);
+    output.value = `${input.value}°`;
+    draw();
+  });
+  spin.addEventListener('click', () => {
+    const start = !frame;
+    spin.setAttribute('aria-pressed', String(start));
+    if (start) {
+      previous = 0;
+      frame = requestAnimationFrame(rotate);
+    } else {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
+  });
+  document.querySelector('#save').addEventListener('click', () => {
+    if (!ctx) return;
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = `orbit-${plates[selected].title.toLowerCase().replaceAll(' ', '-')}.png`;
+    link.click();
+  });
+  if ('ResizeObserver' in window) new ResizeObserver(draw).observe(canvas);
+  else window.addEventListener('resize', draw);
+  select(0);
+</script>
+</html>
